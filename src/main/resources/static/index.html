@@ -1,0 +1,64 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>RabbitMQ WebSocket PoC</title>
+    <!-- SockJS and Stomp from CDN -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/sockjs-client/1.6.1/sockjs.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/stomp.js/2.3.3/stomp.min.js"></script>
+    <style>
+        body { font-family: sans-serif; padding: 20px; }
+        #events { border: 1px solid #ccc; padding: 10px; height: 400px; overflow-y: auto; background: #f9f9f9; }
+        .event-item { padding: 5px; border-bottom: 1px solid #eee; }
+        .server-id { font-weight: bold; color: #007bff; }
+        .timestamp { color: #666; font-size: 0.9em; margin-left: 10px; }
+    </style>
+</head>
+<body>
+    <h1>Shared Nothing WebSocket Event Stream</h1>
+    <div id="status">Connecting...</div>
+    <br>
+    <div id="events"></div>
+
+    <script>
+        var stompClient = null;
+
+        function connect() {
+            var socket = new SockJS('/ws-delivery');
+            stompClient = Stomp.over(socket);
+            
+            // Disable debug logging to console to reduce noise
+            // stompClient.debug = null; 
+
+            stompClient.connect({}, function (frame) {
+                console.log('Connected: ' + frame);
+                document.getElementById("status").innerText = "Connected to /ws-delivery";
+                document.getElementById("status").style.color = "green";
+
+                stompClient.subscribe('/topic/events', function (message) {
+                    showEvent(JSON.parse(message.body));
+                });
+            }, function (error) {
+                 console.log(error);
+                 document.getElementById("status").innerText = "Connection Error (Check Relay?)";
+                 document.getElementById("status").style.color = "red";
+                 // Reconnect logic could go here
+            });
+        }
+
+        function showEvent(event) {
+            var eventsDiv = document.getElementById("events");
+            var newItem = document.createElement("div");
+            newItem.className = "event-item";
+            newItem.innerHTML = "<span class='server-id'>Server: " + event.serverId + "</span>" +
+                                " Seq: " + event.sequence + 
+                                "<span class='timestamp'>" + event.timestamp + "</span>";
+            
+            // Prepend to top
+            eventsDiv.insertBefore(newItem, eventsDiv.firstChild);
+        }
+
+        connect();
+    </script>
+</body>
+</html>
