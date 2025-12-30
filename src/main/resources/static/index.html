@@ -1,5 +1,6 @@
 <!DOCTYPE html>
 <html lang="en">
+
 <head>
     <meta charset="UTF-8">
     <title>RabbitMQ WebSocket PoC</title>
@@ -7,13 +8,37 @@
     <script src="https://cdnjs.cloudflare.com/ajax/libs/sockjs-client/1.6.1/sockjs.min.js"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/stomp.js/2.3.3/stomp.min.js"></script>
     <style>
-        body { font-family: sans-serif; padding: 20px; }
-        #events { border: 1px solid #ccc; padding: 10px; height: 400px; overflow-y: auto; background: #f9f9f9; }
-        .event-item { padding: 5px; border-bottom: 1px solid #eee; }
-        .server-id { font-weight: bold; color: #007bff; }
-        .timestamp { color: #666; font-size: 0.9em; margin-left: 10px; }
+        body {
+            font-family: sans-serif;
+            padding: 20px;
+        }
+
+        #events {
+            border: 1px solid #ccc;
+            padding: 10px;
+            height: 400px;
+            overflow-y: auto;
+            background: #f9f9f9;
+        }
+
+        .event-item {
+            padding: 5px;
+            border-bottom: 1px solid #eee;
+        }
+
+        .server-id {
+            font-weight: bold;
+            color: #007bff;
+        }
+
+        .timestamp {
+            color: #666;
+            font-size: 0.9em;
+            margin-left: 10px;
+        }
     </style>
 </head>
+
 <body>
     <h1>Shared Nothing WebSocket Event Stream</h1>
     <div id="status">Connecting...</div>
@@ -22,28 +47,58 @@
 
     <script>
         var stompClient = null;
+        var myClientId = localStorage.getItem("my_stomp_client_id");
+        if (!myClientId) {
+            myClientId = "client-" + Math.random().toString(36).substr(2, 9);
+            localStorage.setItem("my_stomp_client_id", myClientId);
+        }
+
+        console.log("My Client ID (Persistent): " + myClientId);
 
         function connect() {
             var socket = new SockJS('/ws-delivery');
             stompClient = Stomp.over(socket);
-            
-            // Disable debug logging to console to reduce noise
-            // stompClient.debug = null; 
+
+            // stompClient.debug = null; // Uncomment to disable debug logging
 
             stompClient.connect({}, function (frame) {
                 console.log('Connected: ' + frame);
-                document.getElementById("status").innerText = "Connected to /ws-delivery";
-                document.getElementById("status").style.color = "green";
+                updateStatus("Connected (ID: " + myClientId + ")", "green");
+
+                // Durable Subscription using specific RabbitMQ headers
+                // 1. x-queue-name: Ensures a named queue is created specific to this user.
+                // 2. durable: true: Ensures the queue survives broker restarts/disconnections.
+                // 3. auto-delete: false: Ensures queue is not deleted when we disconnect.
+                var headers = {
+                    'x-queue-name': 'queue-' + myClientId,
+                    'durable': true,
+                    'auto-delete': false,
+                    'id': 'sub-0',
+                    'ack': 'client' // Important: We must manually ACK messages
+                };
 
                 stompClient.subscribe('/topic/events', function (message) {
-                    showEvent(JSON.parse(message.body));
-                });
+                    try {
+                        showEvent(JSON.parse(message.body));
+                        // Acknowledge ONLY after successful processing
+                        message.ack();
+                    } catch (e) {
+                        console.error("Failed to process message", e);
+                        // If we don't ack, it remains in the queue (or goes to DLQ if configured)
+                    }
+                }, headers);
+
             }, function (error) {
-                 console.log(error);
-                 document.getElementById("status").innerText = "Connection Error (Check Relay?)";
-                 document.getElementById("status").style.color = "red";
-                 // Reconnect logic could go here
+                console.log("Connection lost/error: " + error);
+                updateStatus("Reconnecting in 5s...", "orange");
+                setTimeout(connect, 5000);
             });
+        }
+
+        function updateStatus(msg, color) {
+            var statusDiv = document.getElementById("status");
+            statusDiv.innerText = msg;
+            statusDiv.style.color = color;
         }
 
         function showEvent(event) {
@@ -51,9 +106,9 @@
             var newItem = document.createElement("div");
             newItem.className = "event-item";
             newItem.innerHTML = "<span class='server-id'>Server: " + event.serverId + "</span>" +
-                                " Seq: " + event.sequence + 
-                                "<span class='timestamp'>" + event.timestamp + "</span>";
-            
+                " Seq: " + event.sequence +
+                "<span class='timestamp'>" + event.timestamp + "</span>";
+
             // Prepend to top
             eventsDiv.insertBefore(newItem, eventsDiv.firstChild);
         }
@@ -61,4 +116,5 @@
         connect();
     </script>
 </body>
+
 </html>

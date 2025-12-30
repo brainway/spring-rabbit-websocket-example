@@ -49,6 +49,11 @@ public class ServerEventProducer implements ApplicationListener<BrokerAvailabili
 
         System.out.println("Broadcasting event from " + serverInstanceId + ": " + payload);
 
-        messagingTemplate.convertAndSend("/topic/events", payload);
+        // "persistent": "true" tells RabbitMQ to write this message to disk if the
+        // queue is durable
+        Map<String, Object> headers = new HashMap<>();
+        headers.put("persistent", "true");
+
+        messagingTemplate.convertAndSend("/topic/events", payload, headers);
     }
 }
