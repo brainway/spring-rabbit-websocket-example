@@ -20,7 +20,7 @@ public class ServerEventProducer implements ApplicationListener<BrokerAvailabili
 
     private final SimpMessagingTemplate messagingTemplate;
     private final String serverInstanceId;
-    private final AtomicLong sequence = new AtomicLong(0);
+    private final AtomicLong sequence = new AtomicLong(new java.util.Random().nextInt(1001));
     private final AtomicBoolean brokerAvailable = new AtomicBoolean(false);
 
     public ServerEventProducer(SimpMessagingTemplate messagingTemplate) {

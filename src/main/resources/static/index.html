@@ -9,109 +9,256 @@
     <script src="https://cdnjs.cloudflare.com/ajax/libs/stomp.js/2.3.3/stomp.min.js"></script>
     <style>
         body {
-            font-family: sans-serif;
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
             padding: 20px;
+            background-color: #f0f2f5;
         }
 
-        #events {
-            border: 1px solid #ccc;
-            padding: 10px;
+        h1 {
+            color: #333;
+        }
+
+        #board-container {
+            display: flex;
+            flex-direction: row;
+            overflow-x: auto;
+            gap: 20px;
+            padding-bottom: 20px;
+            align-items: flex-start;
+        }
+
+        .server-column {
+            background: white;
+            border-radius: 8px;
+            box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
+            min-width: 300px;
+            width: 300px;
+            display: flex;
+            flex-direction: column;
+            animation: fadeIn 0.5s;
+        }
+
+        .column-header {
+            padding: 15px;
+            background: #fff;
+            border-bottom: 2px solid #007bff;
+            border-radius: 8px 8px 0 0;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+
+        .column-title {
+            font-weight: bold;
+            color: #333;
+            font-size: 0.9em;
+            word-break: break-all;
+        }
+
+        .close-btn {
+            background: none;
+            border: none;
+            color: #999;
+            cursor: pointer;
+            font-size: 1.2em;
+            transition: color 0.2s;
+        }
+
+        .close-btn:hover {
+            color: #dc3545;
+        }
+
+        .events-list {
             height: 400px;
             overflow-y: auto;
-            background: #f9f9f9;
+            padding: 10px;
+            background: #fafafa;
+            border-radius: 0 0 8px 8px;
         }
 
         .event-item {
-            padding: 5px;
-            border-bottom: 1px solid #eee;
-        }
-
-        .server-id {
-            font-weight: bold;
-            color: #007bff;
+            background: white;
+            padding: 10px;
+            margin-bottom: 8px;
+            border-left: 4px solid #007bff;
+            border-radius: 4px;
+            box-shadow: 0 1px 2px rgba(0, 0, 0, 0.05);
+            font-size: 0.9em;
         }
 
         .timestamp {
-            color: #666;
-            font-size: 0.9em;
-            margin-left: 10px;
+            color: #888;
+            font-size: 0.8em;
+            display: block;
+            margin-top: 4px;
+        }
+
+        #status-bar {
+            margin-bottom: 20px;
+            font-weight: bold;
+        }
+
+        @keyframes fadeIn {
+            from {
+                opacity: 0;
+                transform: translateY(10px);
+            }
+
+            to {
+                opacity: 1;
+                transform: translateY(0);
+            }
         }
     </style>
 </head>
 
 <body>
-    <h1>Shared Nothing WebSocket Event Stream</h1>
-    <div id="status">Connecting...</div>
-    <br>
-    <div id="events"></div>
+    <h1>Multi-Server Event Stream</h1>
+    <div id="status-bar" style="color: grey">Connecting...</div>
+
+    <div id="board-container">
+        <!-- Columns will be injected here -->
+    </div>
 
     <script>
         var stompClient = null;
-        var myClientId = localStorage.getItem("my_stomp_client_id");
+        // Version 2 to avoid collision with old queues (without x-expires)
+        var myClientId = localStorage.getItem("my_stomp_client_id_v2");
         if (!myClientId) {
             myClientId = "client-" + Math.random().toString(36).substr(2, 9);
-            localStorage.setItem("my_stomp_client_id", myClientId);
+            localStorage.setItem("my_stomp_client_id_v2", myClientId);
         }
 
         console.log("My Client ID (Persistent): " + myClientId);
 
+        var reconnectTimer = null;
+
         function connect() {
+            // Clean up existing client connection if it exists and isn't closed
+            if (stompClient) {
+                try { stompClient.disconnect(); } catch (e) { }
+            }
+
             var socket = new SockJS('/ws-delivery');
             stompClient = Stomp.over(socket);
 
-            // stompClient.debug = null; // Uncomment to disable debug logging
+            // Relax heartbeats for bad network conditions (default is 10000ms)
+            // 20000ms gives more time before declaring connection dead
+            stompClient.heartbeat.outgoing = 20000;
+            stompClient.heartbeat.incoming = 20000;
 
             stompClient.connect({}, function (frame) {
-                console.log('Connected: ' + frame);
                 updateStatus("Connected (ID: " + myClientId + ")", "green");
+                // Clear any pending reconnects
+                if (reconnectTimer) { clearTimeout(reconnectTimer); reconnectTimer = null; }
 
-                // Durable Subscription using specific RabbitMQ headers
-                // 1. x-queue-name: Ensures a named queue is created specific to this user.
-                // 2. durable: true: Ensures the queue survives broker restarts/disconnections.
-                // 3. auto-delete: false: Ensures queue is not deleted when we disconnect.
+                // Generate unique subscription ID to prevent collisions during rapid reconnects
+                var subId = "sub-" + Math.floor(Math.random() * 1000000);
+
+                // Durable Subscription
                 var headers = {
                     'x-queue-name': 'queue-' + myClientId,
                     'durable': true,
                     'auto-delete': false,
-                    'id': 'sub-0',
-                    'ack': 'client' // Important: We must manually ACK messages
+                    'id': subId,
+                    'ack': 'client',
+                    'prefetch-count': 50 // Limit unacked messages to preventing flooding
                 };
 
                 stompClient.subscribe('/topic/events', function (message) {
                     try {
-                        showEvent(JSON.parse(message.body));
-                        // Acknowledge ONLY after successful processing
+                        let event = JSON.parse(message.body);
+                        processEvent(event);
                         message.ack();
                     } catch (e) {
                         console.error("Failed to process message", e);
-                        // If we don't ack, it remains in the queue (or goes to DLQ if configured)
                     }
                 }, headers);
 
             }, function (error) {
                 console.log("Connection lost/error: " + error);
+
+                // Debounce reconnection: prevent stacking multiple timers
+                if (reconnectTimer) clearTimeout(reconnectTimer);
+
                 updateStatus("Reconnecting in 5s...", "orange");
-                setTimeout(connect, 5000);
+                reconnectTimer = setTimeout(connect, 5000);
             });
         }
 
         function updateStatus(msg, color) {
-            var statusDiv = document.getElementById("status");
+            var statusDiv = document.getElementById("status-bar");
             statusDiv.innerText = msg;
             statusDiv.style.color = color;
         }
 
-        function showEvent(event) {
-            var eventsDiv = document.getElementById("events");
+        function processEvent(event) {
+            var serverId = event.serverId;
+            var columnId = "col-" + serverId;
+            var column = document.getElementById(columnId);
+
+            if (!column) {
+                createColumn(serverId, columnId);
+                column = document.getElementById(columnId);
+            }
+
+            // Add item
+            var list = column.querySelector(".events-list");
             var newItem = document.createElement("div");
             newItem.className = "event-item";
-            newItem.innerHTML = "<span class='server-id'>Server: " + event.serverId + "</span>" +
-                " Seq: " + event.sequence +
+            newItem.innerHTML = "<div><strong>Seq: " + event.sequence + "</strong></div>" +
                 "<span class='timestamp'>" + event.timestamp + "</span>";
 
-            // Prepend to top
-            eventsDiv.insertBefore(newItem, eventsDiv.firstChild);
+            list.insertBefore(newItem, list.firstChild);
         }
+
+        function createColumn(serverId, columnId) {
+            var container = document.getElementById("board-container");
+
+            var col = document.createElement("div");
+            col.className = "server-column";
+            col.id = columnId;
+            // Store raw server ID for sorting
+            col.dataset.serverId = serverId;
+
+            col.innerHTML = `
+                <div class="column-header">
+                    <div class="column-title">Events from<br>${serverId}</div>
+                    <button class="close-btn" onclick="removeColumn('${columnId}')">&times;</button>
+                </div>
+                <div class="events-list"></div>
+            `;
+
+            // Insert in alphabetical order
+            var children = container.children;
+            var inserted = false;
+            for (var i = 0; i < children.length; i++) {
+                var child = children[i];
+                var childServerId = child.dataset.serverId;
+
+                // If the new ID is smaller (alphabetically), insert before this child
+                if (serverId.localeCompare(childServerId) < 0) {
+                    container.insertBefore(col, child);
+                    inserted = true;
+                    break;
+                }
+            }
+
+            // If not inserted yet (it's the biggest or first), append to end
+            if (!inserted) {
+                container.appendChild(col);
+            }
+        }
+
+        function removeColumn(columnId) {
+            var col = document.getElementById(columnId);
+            if (col) {
+                col.remove();
+            }
+        }
+
+        // Expose removeColumn to global scope
+        window.removeColumn = removeColumn;
 
         connect();
     </script>
