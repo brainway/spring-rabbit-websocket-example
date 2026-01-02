@@ -157,23 +157,37 @@
 
                 // Durable Subscription
                 var headers = {
-                    'x-queue-name': 'queue-' + myClientId,
+                    // 'x-queue-name': ... // Removed common queue name
                     'durable': true,
                     'auto-delete': false,
-                    'id': subId,
-                    'ack': 'client',
-                    'prefetch-count': 50 // Limit unacked messages to preventing flooding
+                    // 'id': subId, // Removed common ID
+                    'ack': 'auto'
                 };
 
+                // Subscribe to the second topic as well
+                var headers1 = Object.assign({}, headers);
+                headers1.id = subId + "-1";
+                headers1['x-queue-name'] = 'queue-' + myClientId + '-events';
+                stompClient.subscribe('/topic/events', function (message) {
+                    try {
+                        let event = JSON.parse(message.body);
+                        processEvent(event);
+                    } catch (e) {
+                        console.error("Failed to process message from /topic/events", e);
+                    }
+                }, headers1);
+
+                var headers2 = Object.assign({}, headers);
+                headers2.id = subId + "-2";
+                headers2['x-queue-name'] = 'queue-' + myClientId + '-shmivents';
                 stompClient.subscribe('/topic/shmivents', function (message) {
                     try {
                         let event = JSON.parse(message.body);
                         processEvent(event);
-                        message.ack();
                     } catch (e) {
-                        console.error("Failed to process message", e);
+                        console.error("Failed to process message from /topic/shmivents", e);
                     }
-                }, headers);
+                }, headers2);
 
             }, function (error) {
                 console.log("Connection lost/error: " + error);
