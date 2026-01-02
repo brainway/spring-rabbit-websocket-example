@@ -55,5 +55,8 @@ public class ServerEventProducer implements ApplicationListener<BrokerAvailabili
         headers.put("persistent", "true");
 
         messagingTemplate.convertAndSend("/topic/events", payload, headers);
+
+        payload.put("serverId", serverInstanceId+"piska");
+        messagingTemplate.convertAndSend("/topic/shmivents", payload, headers);
     }
 }

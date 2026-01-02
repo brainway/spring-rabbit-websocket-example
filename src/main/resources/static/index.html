@@ -165,7 +165,7 @@
                     'prefetch-count': 50 // Limit unacked messages to preventing flooding
                 };
 
-                stompClient.subscribe('/topic/events', function (message) {
+                stompClient.subscribe('/topic/shmivents', function (message) {
                     try {
                         let event = JSON.parse(message.body);
                         processEvent(event);

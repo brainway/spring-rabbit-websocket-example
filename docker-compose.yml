@@ -1,0 +1,24 @@
+services:
+  rabbitmq:
+    image: rabbitmq:3-management
+    container_name: rabbitmq-stomp
+    ports:
+      - "5672:5672"
+      - "15672:15672"
+      - "61613:61613"
+    environment:
+      - RABBITMQ_SERVER_ADDITIONAL_ERL_ARGS=-rabbitmq_stomp implicit_connect_with_web false
+    # Enable STOMP plugin on startup
+    command: /bin/bash -c "rabbitmq-plugins enable --offline rabbitmq_stomp && rabbitmq-server"
+
+  nginx:
+    image: nginx:alpine
+    container_name: nginx-lb
+    ports:
+      - "80:80"
+    volumes:
+      - ./nginx/nginx.conf:/etc/nginx/nginx.conf:ro
+    extra_hosts:
+      - "host.docker.internal:host-gateway" # Access host ports from container
+    depends_on:
+      - rabbitmq

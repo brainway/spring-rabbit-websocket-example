@@ -8,40 +8,39 @@ This project demonstrates a highly resilient, active-active WebSocket architectu
 - **Java 21+**
 - **Docker** (to run RabbitMQ)
 
-### 2. Start Infrastructure (RabbitMQ)
-You must run RabbitMQ with the `rabbitmq_stomp` plugin enabled. Run this exact command:
+### 2. Start Infrastructure (RabbitMQ + NGINX LB)
+We use Docker Compose to start RabbitMQ (Broker) and NGINX (Load Balancer).
 
 ```bash
-docker run -d --rm --name rabbitmq-stomp \
-  -p 5672:5672 \
-  -p 15672:15672 \
-  -p 61613:61613 \
-  rabbitmq:3-management \
-  /bin/bash -c "rabbitmq-plugins enable --offline rabbitmq_stomp && rabbitmq-server"
+docker-compose up -d
 ```
 
-- **Port 61613**: STOMP Relay (Used by Spring Boot)
-- **Port 15672**: Management Dashboard (Login: `guest`/`guest`)
+- **Port 80**: NGINX Load Balancer (Access App Here)
+- **Port 61613**: STOMP Relay
+- **Port 15672**: RabbitMQ Management
 
 ### 3. Start Application Instances
-To simulate a real-world cluster, run two instances on different ports. Each instance acts independently ("Shared Nothing") but broadcasts to the same highly available broker.
+Run multiple instances on your host machine. NGINX is configured to load balance ports `8080` through `8089`.
 
-**Instance 1 (Port 8080):**
+**Instance 1:**
 ```bash
 ./mvnw spring-boot:run
 ```
 
-**Instance 2 (Port 8081):**
+**Instance 2:**
 ```bash
 ./mvnw spring-boot:run -Dspring-boot.run.arguments=--server.port=8081
 ```
 
-### 4. Connect Client
-Open your browser to:
-- **[http://localhost:8080](http://localhost:8080)**
+*(You can run up to Instance 10 on port 8089)*
 
-You will see the events arriving from BOTH servers.
-*(Note: Because the columns are sorted by Server ID, open http://localhost:8081 in another tab to see that they view the EXACT same state).*
+### 4. Connect Client
+**IMPORTANT**: Connect via the Load Balancer (Port 80), NOT the direct app ports.
+
+- **[http://localhost](http://localhost)** 
+
+This ensures that if one backend server dies, NGINX will route your reconnection request to the next available server.
+
 
 ---
 
