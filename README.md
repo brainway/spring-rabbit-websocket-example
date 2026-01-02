@@ -28,7 +28,7 @@ The system consists of three main components:
 
 2.  **Backend Server (Spring Boot)**
     *   **Event Producer**: Generates simulated high-frequency events for multiple organizations (`org1`, `org2`) and entity types (`gate`, `manifest`).
-    *   **Auth Controller**: Provides endpoints (`/auth/user`, `/auth/vhost`, `/auth/resource`, `/auth/topic`) that RabbitMQ calls to validate credentials and access rights.
+    *   **Auth Controller**: Provides endpoints (`/api/auth/mqtt/user`, `/api/auth/mqtt/vhost`, `/api/auth/mqtt/resource`, `/api/auth/mqtt/topic`) that RabbitMQ calls to validate credentials and access rights.
     *   **Login API**: Issues JWTs (mocked) for frontend clients.
 
 3.  **Frontend Client (Vanilla JS)**
@@ -109,9 +109,9 @@ The system comes with two pre-configured mock users for testing multi-tenancy:
 *   **MQTT Subscription**: `event/<org>/<type>/<id>`
 
 ### Security Flow
-1.  **Connection**: RabbitMQ calls `POST /auth/user`. Backend validates `username` & `password` (JWT).
+1.  **Connection**: RabbitMQ calls `POST /api/auth/mqtt/user`. Backend validates `username` & `password` (JWT).
 2.  **Subscription**: Client sends `SUBSCRIBE event/org1/#`.
-3.  **Authorization**: RabbitMQ calls `POST /auth/topic`.
+3.  **Authorization**: RabbitMQ calls `POST /api/auth/mqtt/topic`.
     *   Param `routing_key` = `event.org1.#` (or `event.org1.gate.x` depending on context).
     *   Backend checks if `user.org == topic.org`.
     *   Returns `allow` or `deny`.
@@ -119,7 +119,7 @@ The system comes with two pre-configured mock users for testing multi-tenancy:
 ### Configuration Files
 *   **`rabbitmq.conf`**: Configures the HTTP Auth Backend and Caching.
 *   **`docker-compose.yml`**: Defines the RabbitMQ container and network.
-*   **`MqttAuthController.java`**: The core logic for verifying users and topics.
+*   **`MqttAuthController.java`**: The core logic for verifying users and topics (mounted under `/api/auth/mqtt`).
 *   **`index.html`**: The client-side logic for connection, subscription, and UI rendering.
 
 ---
