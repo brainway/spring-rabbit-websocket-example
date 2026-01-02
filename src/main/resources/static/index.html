@@ -162,7 +162,7 @@
     <div id="login-container">
         <h3>Login</h3>
         <div id="login-form">
-            <input type="text" id="username" placeholder="Enter Username (vasya=org1, petya=org2)" required>
+            <input type="text" id="username" placeholder="Enter Username (user1=org1, user2=org2)" required>
 
             <div style="display: flex; gap: 10px;">
                 <select id="org-select">
@@ -248,7 +248,7 @@
                     currentType = type;
 
                     // Finalize Client ID with Username prefix for clarity in logs
-                    // e.g. vasya-web-a1b2c3d4
+                    // e.g. user1-web-a1b2c3d4
                     if (!myClientId.startsWith(username + "-")) {
                         var newClientId = username + "-" + myClientId;
                         // Store in session so it persists for this tab only

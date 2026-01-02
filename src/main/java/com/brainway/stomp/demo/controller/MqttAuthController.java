@@ -70,9 +70,9 @@ public class MqttAuthController {
 
         // Mock User-Org Mapping
         String allowedOrg = "unknown";
-        if ("vasya".equals(username))
+        if ("user1".equals(username))
             allowedOrg = "org1";
-        else if ("petya".equals(username))
+        else if ("user2".equals(username))
             allowedOrg = "org2";
         else if ("admin".equals(username))
             return ResponseEntity.ok("allow"); // Admin access
