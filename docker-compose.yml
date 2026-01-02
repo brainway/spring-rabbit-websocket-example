@@ -5,11 +5,13 @@ services:
     ports:
       - "5672:5672"
       - "15672:15672"
-      - "61613:61613"
+      - "15675:15675"
+    volumes:
+      - ./rabbitmq.conf:/etc/rabbitmq/rabbitmq.conf:ro
     environment:
-      - RABBITMQ_SERVER_ADDITIONAL_ERL_ARGS=-rabbitmq_stomp implicit_connect_with_web false
-    # Enable STOMP plugin on startup
-    command: /bin/bash -c "rabbitmq-plugins enable --offline rabbitmq_stomp && rabbitmq-server"
+      - RABBITMQ_SERVER_ADDITIONAL_ERL_ARGS=-rabbitmq_web_mqtt tcp_listeners [15675]
+    # Enable MQTT and Auth plugins. STOMP removed.
+    command: /bin/bash -c "rabbitmq-plugins enable --offline rabbitmq_management rabbitmq_web_mqtt rabbitmq_auth_backend_http rabbitmq_auth_backend_cache && rabbitmq-server"
 
   nginx:
     image: nginx:alpine

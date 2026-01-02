@@ -3,10 +3,9 @@
 
 <head>
     <meta charset="UTF-8">
-    <title>RabbitMQ WebSocket PoC</title>
-    <!-- SockJS and Stomp from CDN -->
-    <script src="https://cdnjs.cloudflare.com/ajax/libs/sockjs-client/1.6.1/sockjs.min.js"></script>
-    <script src="https://cdnjs.cloudflare.com/ajax/libs/stomp.js/2.3.3/stomp.min.js"></script>
+    <title>RabbitMQ MQTT PoC</title>
+    <!-- MQTT.js from CDN -->
+    <script src="https://unpkg.com/mqtt/dist/mqtt.min.js"></script>
     <style>
         body {
             font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
@@ -16,6 +15,47 @@
 
         h1 {
             color: #333;
+        }
+
+        #login-container {
+            background: white;
+            padding: 20px;
+            border-radius: 8px;
+            box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
+            max-width: 400px;
+            margin-bottom: 20px;
+        }
+
+        #login-form {
+            display: flex;
+            flex-direction: column;
+            gap: 10px;
+        }
+
+        input,
+        select {
+            padding: 8px;
+            border: 1px solid #ccc;
+            border-radius: 4px;
+            flex-grow: 1;
+        }
+
+        button {
+            padding: 8px 16px;
+            background-color: #007bff;
+            color: white;
+            border: none;
+            border-radius: 4px;
+            cursor: pointer;
+        }
+
+        button:hover {
+            background-color: #0056b3;
+        }
+
+        button:disabled {
+            background-color: #ccc;
+            cursor: not-allowed;
         }
 
         #board-container {
@@ -98,6 +138,10 @@
             font-weight: bold;
         }
 
+        .hidden {
+            display: none !important;
+        }
+
         @keyframes fadeIn {
             from {
                 opacity: 0;
@@ -113,91 +157,235 @@
 </head>
 
 <body>
-    <h1>Multi-Server Event Stream</h1>
-    <div id="status-bar" style="color: grey">Connecting...</div>
+    <h1>Multi-Server Event Stream (MQTT)</h1>
 
-    <div id="board-container">
-        <!-- Columns will be injected here -->
+    <div id="login-container">
+        <h3>Login</h3>
+        <div id="login-form">
+            <input type="text" id="username" placeholder="Enter Username (vasya=org1, petya=org2)" required>
+
+            <div style="display: flex; gap: 10px;">
+                <select id="org-select">
+                    <option value="" disabled selected>Select Organization</option>
+                    <option value="org1">Organization 1</option>
+                    <option value="org2">Organization 2</option>
+                </select>
+
+                <select id="type-select">
+                    <option value="all">All Types</option>
+                    <option value="gate">Gate</option>
+                    <option value="manifest">Manifest</option>
+                </select>
+            </div>
+
+            <button onclick="login()">Login & Connect</button>
+        </div>
+        <div id="login-error" style="color: red; margin-top: 10px; display: none;"></div>
+    </div>
+
+    <div id="app-content" class="hidden">
+        <div id="status-bar" style="color: grey">Connecting...</div>
+
+        <div id="board-container">
+            <!-- Columns will be injected here -->
+        </div>
     </div>
 
     <script>
-        var stompClient = null;
-        // Version 2 to avoid collision with old queues (without x-expires)
-        var myClientId = localStorage.getItem("my_stomp_client_id_v2");
+        // Use sessionStorage instead of localStorage to ensure unique Client ID per tab (Session)
+        // This allows simulating multiple devices for the same user by opening multiple tabs
+        var myClientId = sessionStorage.getItem("my_mqtt_client_id");
         if (!myClientId) {
-            myClientId = "client-" + Math.random().toString(36).substr(2, 9);
-            localStorage.setItem("my_stomp_client_id_v2", myClientId);
+            // Generate valid client ID: {random-hex}
+            // User ID will be prepended during login if needed, or we just trust this random one.
+            // For this PoC, we'll keep it simple: "web-{random}"
+            myClientId = "web-" + Math.random().toString(16).substr(2, 8);
+            sessionStorage.setItem("my_mqtt_client_id", myClientId);
         }
 
-        console.log("My Client ID (Persistent): " + myClientId);
+        console.log("My Client ID (Base): " + myClientId);
 
-        var reconnectTimer = null;
+        var currentUser = null;
+        var jwtToken = null;
+        var currentOrg = null;
+        var currentType = null;
 
-        function connect() {
-            // Clean up existing client connection if it exists and isn't closed
-            if (stompClient) {
-                try { stompClient.disconnect(); } catch (e) { }
+        async function login() {
+            var usernameInput = document.getElementById("username");
+            var orgSelect = document.getElementById("org-select");
+            var typeSelect = document.getElementById("type-select");
+
+            var username = usernameInput.value;
+            var org = orgSelect.value;
+            var type = typeSelect.value;
+
+            var errorDiv = document.getElementById("login-error");
+            var loginBtn = document.querySelector("button");
+
+            if (!username) {
+                showError("Username is required"); return;
+            }
+            if (!org) {
+                showError("Please select an Organization"); return;
             }
 
-            var socket = new SockJS('/ws-delivery');
-            stompClient = Stomp.over(socket);
+            loginBtn.disabled = true;
+            errorDiv.style.display = "none";
 
-            // Relax heartbeats for bad network conditions (default is 10000ms)
-            // 20000ms gives more time before declaring connection dead
-            stompClient.heartbeat.outgoing = 20000;
-            stompClient.heartbeat.incoming = 20000;
+            try {
+                // mock login to get JWT
+                const response = await fetch('/api/login', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ username: username })
+                });
 
-            stompClient.connect({}, function (frame) {
+                if (response.ok) {
+                    const data = await response.json();
+                    jwtToken = data.token;
+                    currentUser = username;
+                    currentOrg = org;
+                    currentType = type;
+
+                    // Finalize Client ID with Username prefix for clarity in logs
+                    // e.g. vasya-web-a1b2c3d4
+                    if (!myClientId.startsWith(username + "-")) {
+                        var newClientId = username + "-" + myClientId;
+                        // Store in session so it persists for this tab only
+                        sessionStorage.setItem("my_mqtt_client_id", newClientId);
+                        myClientId = newClientId;
+                    }
+
+                    console.log("Authenticated as " + username + ". Client ID: " + myClientId);
+
+                    document.getElementById("login-container").classList.add("hidden");
+                    document.getElementById("app-content").classList.remove("hidden");
+
+                    connect();
+                } else {
+                    showError("Login failed: " + response.statusText);
+                    loginBtn.disabled = false;
+                }
+            } catch (error) {
+                console.error("Login error", error);
+                showError("Login error: " + error.message);
+                loginBtn.disabled = false;
+            }
+
+            function showError(msg) {
+                errorDiv.innerText = msg;
+                errorDiv.style.display = "block";
+            }
+        }
+
+        function connect() {
+            updateStatus("Connecting to MQTT...", "grey");
+
+            const options = {
+                clientId: myClientId,
+                clean: false,
+                username: currentUser,
+                password: jwtToken,
+                keepalive: 60,
+                protocolVersion: 4,
+                reconnectPeriod: 2000 // interval between two reconnections
+            };
+
+            const brokerUrl = 'ws://' + window.location.hostname + ':15675/ws';
+            console.log("Attempting MQTT connection to:", brokerUrl);
+
+            client = mqtt.connect(brokerUrl, options);
+
+            client.on('connect', function (connack) {
+                console.log("MQTT Client Connected!", connack);
                 updateStatus("Connected (ID: " + myClientId + ")", "green");
-                // Clear any pending reconnects
-                if (reconnectTimer) { clearTimeout(reconnectTimer); reconnectTimer = null; }
 
-                // Generate unique subscription ID to prevent collisions during rapid reconnects
-                var subId = "sub-" + Math.floor(Math.random() * 1000000);
+                // Subscribe based on selection
+                let topicToSubscribe;
+                if (currentType === 'all') {
+                    topicToSubscribe = `event/${currentOrg}/#`;
+                } else {
+                    topicToSubscribe = `event/${currentOrg}/${currentType}/#`;
+                }
 
-                // Durable Subscription
-                var headers = {
-                    // 'x-queue-name': ... // Removed common queue name
-                    'durable': true,
-                    'auto-delete': false,
-                    // 'id': subId, // Removed common ID
-                    'ack': 'auto'
-                };
+                const subscribeOptions = { qos: 0 };
+                console.log("Subscribing to:", topicToSubscribe);
 
-                // Subscribe to the second topic as well
-                var headers1 = Object.assign({}, headers);
-                headers1.id = subId + "-1";
-                headers1['x-queue-name'] = 'queue-' + myClientId + '-events';
-                stompClient.subscribe('/topic/events', function (message) {
-                    try {
-                        let event = JSON.parse(message.body);
-                        processEvent(event);
-                    } catch (e) {
-                        console.error("Failed to process message from /topic/events", e);
+                client.subscribe(topicToSubscribe, subscribeOptions, (err, granted) => {
+                    if (err) {
+                        console.error("Subscription ERROR:", err);
+                        handleAuthFailure("Subscription Denied: You are not authorized for " + currentOrg);
+                    } else {
+                        console.log("Subscription Success:", granted);
                     }
-                }, headers1);
-
-                var headers2 = Object.assign({}, headers);
-                headers2.id = subId + "-2";
-                headers2['x-queue-name'] = 'queue-' + myClientId + '-shmivents';
-                stompClient.subscribe('/topic/shmivents', function (message) {
-                    try {
-                        let event = JSON.parse(message.body);
-                        processEvent(event);
-                    } catch (e) {
-                        console.error("Failed to process message from /topic/shmivents", e);
-                    }
-                }, headers2);
-
-            }, function (error) {
-                console.log("Connection lost/error: " + error);
-
-                // Debounce reconnection: prevent stacking multiple timers
-                if (reconnectTimer) clearTimeout(reconnectTimer);
-
-                updateStatus("Reconnecting in 5s...", "orange");
-                reconnectTimer = setTimeout(connect, 5000);
+                });
             });
+
+            client.on('message', function (topic, message) {
+                try {
+                    let event = JSON.parse(message.toString());
+                    console.log("Received via " + topic, event);
+
+                    let parts = topic.split('/');
+                    if (parts.length >= 4) {
+                        let msgOrg = parts[1];
+                        let msgType = parts[2];
+                        let msgId = parts[3];
+
+                        if (msgOrg !== currentOrg && currentOrg) return;
+
+                        processEvent(event, msgOrg, msgType, msgId);
+                    }
+
+                } catch (e) {
+                    console.error("Failed to process message", e);
+                }
+            });
+
+            client.on('reconnect', function () {
+                updateStatus("Reconnecting...", "orange");
+            });
+
+            client.on('error', function (error) {
+                console.error("MQTT Error: ", error);
+
+                // RabbitMQ often closes the connection on auth failure, which might manifest as an error
+                // If we get an error regarding "Connection closed" or similar, treating it as potential auth failure
+                // is safer than infinite reconnect loop.
+                if (error.message && (error.message.includes("closed") || error.message.includes("ended"))) {
+                    // Could be auth failure
+                }
+                updateStatus("Error: " + error.message, "red");
+            });
+
+            client.on('close', function () {
+                // If connection closes *unexpectedly* and we were recently connected, it might be auth denial
+            });
+
+            // Handle unexpected disconnection which might be auth-related (RabbitMQ kicks client)
+            client.on('offline', function () {
+                updateStatus("Offline", "red");
+            });
+        }
+
+        function handleAuthFailure(msg) {
+            console.warn("Handling Auth Failure:", msg);
+            if (client) {
+                client.end(true); // Force close, stop reconnecting
+                client = null;
+            }
+
+            // Show Login Screen
+            document.getElementById("app-content").classList.add("hidden");
+            document.getElementById("login-container").classList.remove("hidden");
+
+            // Show Error
+            var errorDiv = document.getElementById("login-error");
+            errorDiv.innerText = msg;
+            errorDiv.style.display = "block";
+
+            // Re-enable button
+            document.querySelector("#login-form button").disabled = false;
         }
 
         function updateStatus(msg, color) {
@@ -206,75 +394,50 @@
             statusDiv.style.color = color;
         }
 
-        function processEvent(event) {
-            var serverId = event.serverId;
-            var columnId = "col-" + serverId;
+        function processEvent(event, org, type, id) {
+            var columnId = `col-${org}-${type}-${id}`;
+            var columnTitle = `${org.toUpperCase()} <br> ${type} <br> ${id}`;
+
             var column = document.getElementById(columnId);
 
             if (!column) {
-                createColumn(serverId, columnId);
+                createColumn(columnId, columnTitle);
                 column = document.getElementById(columnId);
             }
 
-            // Add item
             var list = column.querySelector(".events-list");
             var newItem = document.createElement("div");
             newItem.className = "event-item";
             newItem.innerHTML = "<div><strong>Seq: " + event.sequence + "</strong></div>" +
+                "<div>" + event.data + "</div>" +
                 "<span class='timestamp'>" + event.timestamp + "</span>";
 
             list.insertBefore(newItem, list.firstChild);
         }
 
-        function createColumn(serverId, columnId) {
+        function createColumn(columnId, title) {
             var container = document.getElementById("board-container");
 
             var col = document.createElement("div");
             col.className = "server-column";
             col.id = columnId;
-            // Store raw server ID for sorting
-            col.dataset.serverId = serverId;
-
             col.innerHTML = `
                 <div class="column-header">
-                    <div class="column-title">Events from<br>${serverId}</div>
+                    <div class="column-title">${title}</div>
                     <button class="close-btn" onclick="removeColumn('${columnId}')">&times;</button>
                 </div>
                 <div class="events-list"></div>
             `;
 
-            // Insert in alphabetical order
-            var children = container.children;
-            var inserted = false;
-            for (var i = 0; i < children.length; i++) {
-                var child = children[i];
-                var childServerId = child.dataset.serverId;
-
-                // If the new ID is smaller (alphabetically), insert before this child
-                if (serverId.localeCompare(childServerId) < 0) {
-                    container.insertBefore(col, child);
-                    inserted = true;
-                    break;
-                }
-            }
-
-            // If not inserted yet (it's the biggest or first), append to end
-            if (!inserted) {
-                container.appendChild(col);
-            }
+            container.appendChild(col);
         }
 
         function removeColumn(columnId) {
             var col = document.getElementById(columnId);
-            if (col) {
-                col.remove();
-            }
+            if (col) col.remove();
         }
 
-        // Expose removeColumn to global scope
         window.removeColumn = removeColumn;
-
-        connect();
     </script>
 </body>
 
